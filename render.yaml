@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: re-analyzer-backend
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false  # set manually in Render dashboard
+    healthCheckPath: /health
+
+  - type: web
+    name: re-analyzer-frontend
+    runtime: node
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    envVars:
+      - key: VITE_API_URL
+        value: https://re-analyzer-backend.onrender.com
