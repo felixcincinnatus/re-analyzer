@@ -1,136 +1,181 @@
-import io
 from datetime import date
-from html import escape
-from weasyprint import HTML
+from fpdf import FPDF
 from ..models.deal import DealRequest, CostBreakdown, DealMetrics
 
-
 SCORE_COLORS = {
-    "STRONG":   ("#1a7a4a", "#d4f5e2"),
-    "MARGINAL": ("#7a5c1a", "#fef3cd"),
-    "AVOID":    ("#7a1a1a", "#fde8e8"),
+    "STRONG":   {"fg": (26, 122, 74),   "bg": (212, 245, 226)},
+    "MARGINAL": {"fg": (122, 92, 26),   "bg": (254, 243, 205)},
+    "AVOID":    {"fg": (122, 26, 26),   "bg": (253, 232, 232)},
 }
 
 
-def fmt(value: float, symbol: str) -> str:
-    return f"{symbol}{value:,.0f}"
+def _fmt(value: float, sym: str) -> str:
+    return f"{sym}{value:,.0f}"
 
 
 def generate_pdf(req: DealRequest, costs: CostBreakdown, metrics: DealMetrics, narrative: str) -> bytes:
-    sym = "₾" if req.market == "ge" else "$"
+    sym = "\u20be" if req.market == "ge" else "$"
     score = metrics.deal_score
-    score_fg, score_bg = SCORE_COLORS.get(score, ("#333", "#eee"))
+    colors = SCORE_COLORS.get(score, {"fg": (51, 51, 51), "bg": (238, 238, 238)})
+    fg = colors["fg"]
+    bg = colors["bg"]
+    market_label = "Georgia (GEL)" if req.market == "ge" else "United States (USD)"
 
-    html = f"""<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<style>
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
-  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-  body {{
-    font-family: 'Inter', Arial, sans-serif;
-    font-size: 11px;
-    color: #1a1a1a;
-    padding: 32px 40px;
-    line-height: 1.5;
-  }}
-  h1 {{ font-size: 20px; font-weight: 700; margin-bottom: 2px; }}
-  h2 {{ font-size: 13px; font-weight: 600; margin: 18px 0 8px; border-bottom: 1px solid #e0e0e0; padding-bottom: 4px; }}
-  .header {{ display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; }}
-  .meta {{ font-size: 10px; color: #666; margin-top: 4px; }}
-  .score-banner {{
-    display: inline-block;
-    padding: 6px 20px;
-    border-radius: 6px;
-    font-size: 16px;
-    font-weight: 700;
-    color: {score_fg};
-    background: {score_bg};
-    border: 1.5px solid {score_fg};
-  }}
-  table {{ width: 100%; border-collapse: collapse; margin-bottom: 8px; }}
-  td, th {{ padding: 5px 8px; text-align: left; font-size: 10.5px; }}
-  th {{ background: #f5f5f5; font-weight: 600; }}
-  tr:nth-child(even) td {{ background: #fafafa; }}
-  .total-row td {{ font-weight: 700; border-top: 1.5px solid #ccc; }}
-  .two-col {{ display: flex; gap: 16px; }}
-  .two-col > div {{ flex: 1; }}
-  .grid-4 {{ display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 8px; margin-bottom: 8px; }}
-  .card {{
-    background: #f8f8f8;
-    border: 1px solid #e5e5e5;
-    border-radius: 6px;
-    padding: 8px 10px;
-  }}
-  .card-label {{ font-size: 9px; color: #888; margin-bottom: 2px; }}
-  .card-value {{ font-size: 14px; font-weight: 700; }}
-  .narrative {{ font-size: 10.5px; line-height: 1.7; color: #333; }}
-  .narrative p {{ margin-bottom: 10px; }}
-  .footer {{ margin-top: 24px; border-top: 1px solid #e0e0e0; padding-top: 8px; font-size: 9px; color: #aaa; display: flex; justify-content: space-between; }}
-  .highlight {{ color: {score_fg}; }}
-</style>
-</head>
-<body>
+    pdf = FPDF()
+    pdf.set_margins(16, 16, 16)
+    pdf.add_page()
+    pdf.set_auto_page_break(auto=True, margin=16)
 
-<div class="header">
-  <div>
-    <h1>Deal Analysis Memo</h1>
-    <div class="meta">{escape(req.address)}, {escape(req.city)} &nbsp;|&nbsp; {escape(req.property_type)} &nbsp;|&nbsp; {req.sqft:,.0f} sqft &nbsp;|&nbsp; {req.bedrooms}bd/{req.bathrooms}ba</div>
-    <div class="meta">Analyst: {escape(req.analyst_name or '')} &nbsp;|&nbsp; Date: {date.today().strftime("%B %d, %Y")} &nbsp;|&nbsp; Market: {"Georgia (GEL)" if req.market == "ge" else "United States (USD)"}</div>
-  </div>
-  <div class="score-banner">{score}</div>
-</div>
+    W = pdf.w - 32  # usable width
 
-<div class="grid-4">
-  <div class="card"><div class="card-label">Purchase Price</div><div class="card-value">{fmt(req.purchase_price, sym)}</div></div>
-  <div class="card"><div class="card-label">ARV Estimate</div><div class="card-value">{fmt(req.arv_estimate, sym)}</div></div>
-  <div class="card"><div class="card-label">Net Profit</div><div class="card-value highlight">{fmt(metrics.net_profit, sym)}</div></div>
-  <div class="card"><div class="card-label">ROI</div><div class="card-value highlight">{metrics.roi_pct:.1f}%</div></div>
-</div>
+    # ── Header ────────────────────────────────────────────────────────────────
+    pdf.set_font("Helvetica", "B", 16)
+    pdf.set_text_color(26, 26, 26)
+    pdf.cell(W - 36, 8, "Deal Analysis Memo", ln=False)
 
-<div class="two-col">
-  <div>
-    <h2>Cost Breakdown</h2>
-    <table>
-      <tr><th>Item</th><th>Amount</th></tr>
-      <tr><td>Purchase Price</td><td>{fmt(req.purchase_price, sym)}</td></tr>
-      <tr><td>Repair Estimate ({escape(req.condition)} condition)</td><td>{fmt(costs.repair_estimate, sym)}</td></tr>
-      <tr><td>Closing Costs ({req.closing_costs_pct}%)</td><td>{fmt(costs.closing_costs, sym)}</td></tr>
-      <tr><td>Holding Costs ({req.holding_months} mo @ {fmt(req.monthly_holding_cost, sym)}/mo)</td><td>{fmt(costs.holding_costs, sym)}</td></tr>
-      <tr><td>Selling Costs ({req.selling_costs_pct}%)</td><td>{fmt(costs.selling_costs, sym)}</td></tr>
-      <tr class="total-row"><td>Total All-In Cost</td><td>{fmt(costs.total_all_in_cost, sym)}</td></tr>
-    </table>
-  </div>
+    # Score badge
+    pdf.set_fill_color(*bg)
+    pdf.set_text_color(*fg)
+    pdf.set_font("Helvetica", "B", 11)
+    badge_x = pdf.get_x()
+    badge_y = pdf.get_y()
+    pdf.set_xy(pdf.w - 16 - 34, badge_y)
+    pdf.cell(34, 8, score, border=1, align="C", fill=True)
+    pdf.set_xy(16, badge_y + 8)
 
-  <div>
-    <h2>Returns &amp; Max Bid</h2>
-    <table>
-      <tr><th>Metric</th><th>Value</th></tr>
-      <tr><td>ARV Estimate</td><td>{fmt(req.arv_estimate, sym)}</td></tr>
-      <tr><td>Net Profit</td><td>{fmt(metrics.net_profit, sym)}</td></tr>
-      <tr><td>Profit Margin</td><td>{metrics.profit_margin_pct:.1f}%</td></tr>
-      <tr><td>ROI</td><td>{metrics.roi_pct:.1f}%</td></tr>
-      <tr><td>Max Bid (70% Rule)</td><td>{fmt(metrics.max_bid_70, sym)}</td></tr>
-      <tr class="total-row"><td>Max Bid (15% Margin)</td><td>{fmt(metrics.max_bid_custom, sym)}</td></tr>
-    </table>
-  </div>
-</div>
+    pdf.set_text_color(100, 100, 100)
+    pdf.set_font("Helvetica", "", 8)
+    addr_line = f"{req.address}, {req.city}  |  {req.property_type}  |  {req.sqm:,.0f} sq m  |  {req.bedrooms}bd/{req.bathrooms}ba"
+    pdf.cell(W, 5, addr_line, ln=True)
+    analyst_line = f"Analyst: {req.analyst_name or '—'}  |  Date: {date.today().strftime('%B %d, %Y')}  |  Market: {market_label}"
+    pdf.cell(W, 5, analyst_line, ln=True)
+    pdf.ln(3)
 
-<h2>AI Deal Analysis</h2>
-<div class="narrative">
-  {"".join(f"<p>{escape(p.strip())}</p>" for p in narrative.strip().split("\n\n") if p.strip())}
-</div>
+    # ── Divider ───────────────────────────────────────────────────────────────
+    pdf.set_draw_color(220, 220, 220)
+    pdf.line(16, pdf.get_y(), pdf.w - 16, pdf.get_y())
+    pdf.ln(4)
 
-{"" if not req.notes else f'<h2>Analyst Notes</h2><div class="narrative"><p>{escape(req.notes)}</p></div>'}
+    # ── Key metrics row (4 cards) ──────────────────────────────────────────────
+    card_w = (W - 6) / 4
+    cards = [
+        ("Purchase Price", _fmt(req.purchase_price, sym), False),
+        ("ARV Estimate",   _fmt(req.arv_estimate, sym),   False),
+        ("Net Profit",     _fmt(metrics.net_profit, sym),  True),
+        ("ROI",            f"{metrics.roi_pct:.1f}%",      True),
+    ]
+    row_y = pdf.get_y()
+    for i, (label, value, highlight) in enumerate(cards):
+        x = 16 + i * (card_w + 2)
+        pdf.set_fill_color(248, 248, 248)
+        pdf.set_draw_color(229, 229, 229)
+        pdf.rect(x, row_y, card_w, 14, "DF")
+        pdf.set_xy(x + 2, row_y + 2)
+        pdf.set_font("Helvetica", "", 7)
+        pdf.set_text_color(136, 136, 136)
+        pdf.cell(card_w - 4, 4, label, ln=True)
+        pdf.set_xy(x + 2, row_y + 6)
+        pdf.set_font("Helvetica", "B", 11)
+        pdf.set_text_color(*fg if highlight else (26, 26, 26))
+        pdf.cell(card_w - 4, 6, value)
+    pdf.set_y(row_y + 18)
 
-<div class="footer">
-  <span>Generated by RE Deal Analyzer &nbsp;|&nbsp; Powered by Claude AI</span>
-  <span>For informational purposes only. Not financial advice.</span>
-</div>
+    # ── Two-column tables ─────────────────────────────────────────────────────
+    col_w = (W - 6) / 2
+    table_y = pdf.get_y()
 
-</body>
-</html>"""
+    def section_header(x, y, w, text):
+        pdf.set_xy(x, y)
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.set_text_color(26, 26, 26)
+        pdf.cell(w, 6, text, ln=True)
+        pdf.set_draw_color(220, 220, 220)
+        pdf.line(x, pdf.get_y(), x + w, pdf.get_y())
+        pdf.ln(2)
 
-    pdf_bytes = HTML(string=html).write_pdf()
-    return pdf_bytes
+    def table_row(x, w, left, right, bold=False, shade=False):
+        y = pdf.get_y()
+        if shade:
+            pdf.set_fill_color(250, 250, 250)
+            pdf.rect(x, y, w, 6, "F")
+        if bold:
+            pdf.set_draw_color(200, 200, 200)
+            pdf.line(x, y, x + w, y)
+        pdf.set_xy(x + 2, y)
+        pdf.set_font("Helvetica", "B" if bold else "", 8.5)
+        pdf.set_text_color(26, 26, 26)
+        pdf.cell(w - 40, 6, left)
+        pdf.set_xy(x + w - 38, y)
+        pdf.cell(36, 6, right, align="R")
+        pdf.set_y(y + 6)
+
+    # Left: Cost Breakdown
+    section_header(16, table_y, col_w, "Cost Breakdown")
+    left_rows = [
+        ("Purchase Price",                           _fmt(req.purchase_price, sym),     False, False),
+        (f"Repair ({req.condition} cond.)",          _fmt(costs.repair_estimate, sym),   False, True),
+        (f"Closing ({req.closing_costs_pct}%)",      _fmt(costs.closing_costs, sym),     False, False),
+        (f"Holding ({req.holding_months} mo)",        _fmt(costs.holding_costs, sym),     False, True),
+        (f"Selling ({req.selling_costs_pct}%)",       _fmt(costs.selling_costs, sym),     False, False),
+        ("Total All-In Cost",                        _fmt(costs.total_all_in_cost, sym), True,  False),
+    ]
+    for label, val, bold, shade in left_rows:
+        table_row(16, col_w, label, val, bold=bold, shade=shade)
+
+    # Right: Returns
+    right_y = table_y
+    section_header(16 + col_w + 6, right_y, col_w, "Returns & Max Bid")
+    right_rows = [
+        ("ARV Estimate",         _fmt(req.arv_estimate, sym),    False, False),
+        ("Net Profit",           _fmt(metrics.net_profit, sym),  False, True),
+        ("Profit Margin",        f"{metrics.profit_margin_pct:.1f}%", False, False),
+        ("ROI",                  f"{metrics.roi_pct:.1f}%",      False, True),
+        ("Max Bid (70% Rule)",   _fmt(metrics.max_bid_70, sym),  False, False),
+        ("Max Bid (15% Margin)", _fmt(metrics.max_bid_custom, sym), True, False),
+    ]
+    cur_y = pdf.get_y()
+    pdf.set_y(right_y + 8)  # align with left table start
+    for label, val, bold, shade in right_rows:
+        table_row(16 + col_w + 6, col_w, label, val, bold=bold, shade=shade)
+
+    pdf.set_y(max(pdf.get_y(), cur_y) + 4)
+
+    # ── AI Narrative ──────────────────────────────────────────────────────────
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.set_text_color(26, 26, 26)
+    pdf.cell(W, 6, "AI Deal Analysis", ln=True)
+    pdf.set_draw_color(220, 220, 220)
+    pdf.line(16, pdf.get_y(), pdf.w - 16, pdf.get_y())
+    pdf.ln(2)
+
+    pdf.set_font("Helvetica", "", 8.5)
+    pdf.set_text_color(51, 51, 51)
+    for para in narrative.strip().split("\n\n"):
+        para = para.strip()
+        if para:
+            pdf.multi_cell(W, 5, para)
+            pdf.ln(3)
+
+    # ── Analyst Notes ─────────────────────────────────────────────────────────
+    if req.notes and req.notes.strip():
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.set_text_color(26, 26, 26)
+        pdf.cell(W, 6, "Analyst Notes", ln=True)
+        pdf.set_draw_color(220, 220, 220)
+        pdf.line(16, pdf.get_y(), pdf.w - 16, pdf.get_y())
+        pdf.ln(2)
+        pdf.set_font("Helvetica", "", 8.5)
+        pdf.set_text_color(51, 51, 51)
+        pdf.multi_cell(W, 5, req.notes.strip())
+
+    # ── Footer ────────────────────────────────────────────────────────────────
+    pdf.set_y(-20)
+    pdf.set_draw_color(220, 220, 220)
+    pdf.line(16, pdf.get_y(), pdf.w - 16, pdf.get_y())
+    pdf.ln(2)
+    pdf.set_font("Helvetica", "", 7)
+    pdf.set_text_color(170, 170, 170)
+    pdf.cell(W / 2, 5, "Generated by RE Deal Analyzer  |  Powered by Claude AI")
+    pdf.cell(W / 2, 5, "For informational purposes only. Not financial advice.", align="R")
+
+    return bytes(pdf.output())
