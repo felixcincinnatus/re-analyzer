@@ -12,7 +12,7 @@ services:
 
   - type: web
     name: re-analyzer-frontend
-    runtime: node
+    runtime: static
     rootDir: frontend
     buildCommand: npm install && npm run build
     staticPublishPath: dist
